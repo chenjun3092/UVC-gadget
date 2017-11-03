@@ -9,7 +9,9 @@ typedef unsigned char U8;
 typedef unsigned int U32;
 typedef unsigned int size_t;
 
-#define MaxFrameSize 153600
+#define MaxFrameSize    640*480*2   //define in kernel
+#define MaxPayloadSize  640*480*2
+
 #define ARRAY_SIZE(a)                  ((sizeof(a) / sizeof(a[0])))
 #define CLEAR(x)                       memset(&(x), 0, sizeof (x))
 #define FrameInterval2FrameRate(val)   ((int)(1.0/val*10000000))
@@ -58,7 +60,7 @@ static const struct uvc_frame_info uvc_frames_mjpeg[] = {
 	{  640,  360, { 333333, 666666, 1000000, 0 }, },
 	{  640,  480, { 333333, 666666, 1000000, 0 }, },
     { 1280,  720, { 333333, 666666, 1000000, 0 }, },
-    { 1920, 1080, { 333333, 666666, 1000000, 0 }, },
+    { 1920, 1080, { 400000, 666666, 1000000, 0 }, },
 	{ 0, 0, { 0, }, },
 };
 
@@ -125,6 +127,6 @@ typedef struct {  //only for bulk mode
 
 } uvc_device;
  
-void uvc_device_init(uvc_device *uvc,uvc_set param);
+int uvc_device_init(uvc_device *uvc,uvc_set param);
 void uvc_device_exit(uvc_device *uvc);
 void uvc_process(uvc_device *uvc);

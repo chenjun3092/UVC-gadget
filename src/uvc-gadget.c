@@ -59,14 +59,14 @@ static void uvc_fill_streaming_control(struct uvc_streaming_control *ctrl,
 	/* TODO: the UVC maxpayload transfer size should be filled
 	 * by the driver.
 	 */
-	ctrl->dwMaxPayloadTransferSize = MaxFrameSize;
+	ctrl->dwMaxPayloadTransferSize = MaxPayloadSize;
 
 	ctrl->bmFramingInfo = 3;
 	ctrl->bPreferedVersion = 1;
 	ctrl->bMaxVersion = 1;
 }
  
-void uvc_device_init(uvc_device *uvc,uvc_set param)
+int uvc_device_init(uvc_device *uvc,uvc_set param)
 {
     int ret = -1;
     struct v4l2_event_subscription sub;
@@ -76,7 +76,7 @@ void uvc_device_init(uvc_device *uvc,uvc_set param)
     if(!uvc)
     {
         printf("Error: Please Input a uvc device struct\n");
-        return;
+        goto err1;
     }
 
 /* Input Device Func & Video Format & Request Probe and Commit Init */
@@ -87,7 +87,7 @@ void uvc_device_init(uvc_device *uvc,uvc_set param)
         uvc->set = param;
     } else{
         printf("Init UVC Device fail ,lack of Input device Func \n");
-        return;
+        goto err1;
     }
 #ifdef DBUG_UVC_DEVICE
     printf("[ %s iformat %d iframe %d width %d height %d ]\n",__func__,
@@ -98,8 +98,8 @@ void uvc_device_init(uvc_device *uvc,uvc_set param)
     uvc->control   = UVC_PROBE_CONTROL;
     uvc_fill_streaming_control(&uvc->probe,uvc->set.iformat,uvc->set.iframe);
     uvc_fill_streaming_control(&uvc->commit,uvc->set.iformat,uvc->set.iframe);
-    uvc->probe.dwMaxPayloadTransferSize = MaxFrameSize;
-    uvc->commit.dwMaxPayloadTransferSize = MaxFrameSize;
+    uvc->probe.dwMaxPayloadTransferSize = MaxPayloadSize;
+    uvc->commit.dwMaxPayloadTransferSize = MaxPayloadSize;
     uvc->set.frameRate = FrameInterval2FrameRate(uvc->commit.dwFrameInterval);
 #ifdef DBUG_UVC_DEVICE
     printf("[ %s probe iformat %d iframe %d dwFrameInterval %d frameRate %d ]\n",__func__,
@@ -117,25 +117,26 @@ void uvc_device_init(uvc_device *uvc,uvc_set param)
     if(param.name == NULL)
     {
         printf("[ %s the uvc can't be opened ]\n",__func__);
-        return;
+        goto err1;
     }
     uvc->uvc_fd = open(param.name, O_RDWR | O_NONBLOCK);
     if (uvc->uvc_fd == -1) {
         printf("UVC: device open failed: %s (%d).\n",
                strerror(errno), errno);
-        return; 
+
+        goto err1; 
     }
    /* query uvc device */
     ret = ioctl(uvc->uvc_fd, VIDIOC_QUERYCAP, &cap);
     if (ret < 0) {
         printf("UVC: unable to query uvc device: %s (%d)\n",
                 strerror(errno), errno);
-        goto err;
+        goto err2;
     }
    /* check the device type */
     if (!(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT)) {
         printf("UVC: %s is no video output device\n", param.name);
-        goto err;
+        goto err2;
     }
 #ifdef DBUG_UVC_DEVICE
     printf("uvc device is %s on bus %s\n", cap.card, cap.bus_info);
@@ -156,11 +157,12 @@ void uvc_device_init(uvc_device *uvc,uvc_set param)
     /* Exit the function with Ctrl-C */
     signal(SIGINT,uvc_device_int);
 
-    return;
+    return 0;
 
-err:
+err2:
    close(uvc->uvc_fd);
-   return;
+err1:
+   return -1;
 }
 
 static S8 uvc_uninit_device(uvc_device *uvc)
