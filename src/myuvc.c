@@ -27,6 +27,7 @@ int uvc_input_StartCapture(void *uvc,int flags)
     switch(set.fcc)
     {   
         case V4L2_PIX_FMT_YUYV:
+        case V4L2_PIX_FMT_NV12:
             printf("[ Video Format is V4L2_PIX_FMT_YUYV ]\n");
             break;
         case V4L2_PIX_FMT_MJPEG:
@@ -61,7 +62,7 @@ int uvc_input_StartCapture(void *uvc,int flags)
     return 0;
 }
 
-int uvc_fillbuf(void *uvc,U32 *length,void *buf)
+int uvc_device_fillbuf(void *uvc,U32 *length,void *buf)
 { 
 
     if( !uvc || !length || !buf)
@@ -72,7 +73,28 @@ int uvc_fillbuf(void *uvc,U32 *length,void *buf)
     }
 
     uvc_device *uvc_dev =(uvc_device*)uvc;
-    *length = 120;
+
+#if 0 //
+    switch(uvc_dev->set.fcc)
+    {   
+        case V4L2_PIX_FMT_YUYV:
+            *length = uvc_dev->set.width * uvc_dev->set.width * 2.0;
+            break;
+        case V4L2_PIX_FMT_NV12:
+            *length = uvc_dev->set.width * uvc_dev->set.width * 1.5;
+            break;
+        case V4L2_PIX_FMT_MJPEG:
+            *length = uvc_dev->set.width * uvc_dev->set.width / 2.0;
+            break;
+        case V4L2_PIX_FMT_H264:
+            *length = uvc_dev->set.width * uvc_dev->set.width / 2.0;
+            break;
+        default:
+            *length = uvc_dev->set.width * uvc_dev->set.width / 2.0;
+            break;
+    }
+#endif
+   *length =120;
  //   video_get_frame(Input_video,length,buf);
 
     return 0;
@@ -111,7 +133,7 @@ int main()
     printf("[ Enter Debug Mode ]\n");
     uvc_set set ={"/dev/video0",V4L2_PIX_FMT_MJPEG,1,1,640,480,25,31,
                     uvc_input_StartCapture,
-                    uvc_fillbuf,
+                    uvc_device_fillbuf,
                     uvc_input_StopCapture };
     uvc_device uvc;
     memset(&uvc,0x00,sizeof(uvc_device));

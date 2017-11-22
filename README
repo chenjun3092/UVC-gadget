@@ -3,7 +3,7 @@
 myuvc.c
 1. uvc_input_StartCapture()
    Input Video 初始化或者属性设置
-2. uvc_fillbuf()
+2. uvc_device_fillbuf()
    获取video buf
 3. uvc_input_StopCapture()
    Input Device 退出或者用于属性销毁

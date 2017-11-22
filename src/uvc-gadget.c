@@ -48,18 +48,20 @@ static void uvc_fill_streaming_control(struct uvc_streaming_control *ctrl,
 	ctrl->dwFrameInterval = frame->intervals[0];
 	switch (format->fcc) {
 	case V4L2_PIX_FMT_YUYV:
-		ctrl->dwMaxVideoFrameSize = frame->width * frame->height * 1.5;
+		ctrl->dwMaxVideoFrameSize = frame->width * frame->height * 2.0;
 		break;
+    case V4L2_PIX_FMT_NV12:
+        ctrl->dwMaxVideoFrameSize = frame->width * frame->height * 1.5;
 	case V4L2_PIX_FMT_MJPEG:
 	case V4L2_PIX_FMT_H264:
-		ctrl->dwMaxVideoFrameSize = MaxFrameSize;
+		ctrl->dwMaxVideoFrameSize = frame->width * frame->height *1.5 / 2.0;
 		break;
 	}
 
 	/* TODO: the UVC maxpayload transfer size should be filled
 	 * by the driver.
 	 */
-	ctrl->dwMaxPayloadTransferSize = MaxPayloadSize;
+	ctrl->dwMaxPayloadTransferSize = ctrl->dwMaxVideoFrameSize;
 
 	ctrl->bmFramingInfo = 3;
 	ctrl->bPreferedVersion = 1;
@@ -81,7 +83,7 @@ int uvc_device_init(uvc_device *uvc,uvc_set param)
 
 /* Input Device Func & Video Format & Request Probe and Commit Init */
     if(    param.uvc_input_StartCapture 
-        && param.uvc_fillbuf 
+        && param.uvc_device_fillbuf 
         && param.uvc_input_StopCaputre )
     {
         uvc->set = param;
@@ -89,7 +91,7 @@ int uvc_device_init(uvc_device *uvc,uvc_set param)
         printf("Init UVC Device fail ,lack of Input device Func \n");
         goto err1;
     }
-#ifdef DBUG_UVC_DEVICE
+#ifdef UVC_DEBUG_ENABLE
     printf("[ %s iformat %d iframe %d width %d height %d ]\n",__func__,
             uvc->set.iformat,uvc->set.iframe,uvc->set.width,uvc->set.height);
 #endif
@@ -98,10 +100,11 @@ int uvc_device_init(uvc_device *uvc,uvc_set param)
     uvc->control   = UVC_PROBE_CONTROL;
     uvc_fill_streaming_control(&uvc->probe,uvc->set.iformat,uvc->set.iframe);
     uvc_fill_streaming_control(&uvc->commit,uvc->set.iformat,uvc->set.iframe);
-    uvc->probe.dwMaxPayloadTransferSize = MaxPayloadSize;
-    uvc->commit.dwMaxPayloadTransferSize = MaxPayloadSize;
+    /* set default value */
+    uvc->probe.dwMaxPayloadTransferSize = MaxPayloadSize;  
+    uvc->commit.dwMaxPayloadTransferSize = MaxPayloadSize;  
     uvc->set.frameRate = FrameInterval2FrameRate(uvc->commit.dwFrameInterval);
-#ifdef DBUG_UVC_DEVICE
+#ifdef UVC_DEBUG_ENABLE
     printf("[ %s probe iformat %d iframe %d dwFrameInterval %d frameRate %d ]\n",__func__,
            uvc->probe.bFormatIndex,uvc->probe.bFrameIndex,uvc->probe.dwFrameInterval,uvc->set.frameRate);
 #endif
@@ -138,7 +141,7 @@ int uvc_device_init(uvc_device *uvc,uvc_set param)
         printf("UVC: %s is no video output device\n", param.name);
         goto err2;
     }
-#ifdef DBUG_UVC_DEVICE
+#ifdef UVC_DEBUG_ENABLE
     printf("uvc device is %s on bus %s\n", cap.card, cap.bus_info);
     printf("uvc open succeeded, file descriptor = %d\n", uvc->uvc_fd);
 #endif
@@ -330,8 +333,7 @@ static S8 uvc_video_qbuf(uvc_device *uvc)
 		mem[i].buf.memory = V4L2_MEMORY_MMAP;
 		mem[i].buf.index = i;
        
-        // fill uvc buffer  MaxBufSize 153600
-        ret = set.uvc_fillbuf(uvc,&mem[i].buf.bytesused,mem[i].start);
+        ret = set.uvc_device_fillbuf(uvc,&mem[i].buf.bytesused,mem[i].start);
         if( ret <0 )
         {
             printf(" %s some thing error in fill data\n",__func__);
@@ -350,56 +352,56 @@ static S8 uvc_video_qbuf(uvc_device *uvc)
 	return 0;
 }
 
+static void uvc_handle_streamoff_event(uvc_device *uvc)
+{
+    int uvc_fd = uvc->uvc_fd;
+
+   /* Stop Input streaming... */
+   if (uvc->input_video_straming) {
+        uvc->set.uvc_input_StopCaputre(uvc,0);
+   }    
+   uvc->input_video_straming = 0; 
+
+   /* ... and now UVC streaming.. */
+   if (uvc->output_video_straming) {
+        uvc_video_stream(uvc_fd,0);
+        uvc_uninit_device(uvc);
+        uvc_video_reqbufs(uvc,0);
+   } 
+   uvc->output_video_straming = 0; 
+   uvc->has_reqbufs = 0; 
+
+}
 
 static S8 uvc_handle_streamon_event(uvc_device *uvc)
 {
 	int ret;
-
     uvc_set set = uvc->set;
     int uvc_fd = uvc->uvc_fd;
 
-    /* Request UVC buffers & mmap  */
-    if(!uvc->has_reqbufs)
-    {
-  	    ret = uvc_video_reqbufs(uvc,1);
-	    if (ret < 0)
-		    goto err;
-        uvc->has_reqbufs = 1;
-    }
+    /* Before Streamon ,First Streamoff */
+    uvc_handle_streamoff_event(uvc);
 
 	/* Start Input Video capturing now. */
-    if(!uvc->input_video_straming)
-    {   /* the first to init the input device */
-	    ret = set.uvc_input_StartCapture(uvc,0);
-	    if (ret < 0)
-		    goto err;
-	    uvc->input_video_straming = 1;
-    } else {
-        /* only set the attr of input device */
-        set.uvc_input_StopCaputre(uvc,1);
-	    ret = set.uvc_input_StartCapture(uvc,1);
-	    if (ret < 0)
-		    goto err;
-	    uvc->input_video_straming = 1;
-    }
+	ret = set.uvc_input_StartCapture(uvc,0);
+	if (ret < 0)
+	    goto err;
+	uvc->input_video_straming = 1;
+
+    /* Request UVC buffers & mmap  */
+  	ret = uvc_video_reqbufs(uvc,1);
+	if (ret < 0)
+	    goto err;
+    uvc->has_reqbufs = 1;
 
 	/* Queue buffers to UVC domain and start streaming. */
-    if(!uvc->output_video_straming)
-    {
-	    ret = uvc_video_qbuf(uvc);
-	    if (ret < 0)
-		    goto err;
-        /* UVC Device Streamon */
-        uvc_video_stream(uvc_fd,1);
-    } 
-
+	ret = uvc_video_qbuf(uvc);
+	if (ret < 0)
+	    goto err;
+    uvc_video_stream(uvc_fd,1); 
     uvc->output_video_straming = 1;
-    uvc->uvc_shutdown_requested = 0;
-#ifdef DBUG_UVC_DEVICE
-    printf("[ %s start streaming ]\n",__func__);
-#endif
-	return 0;
 
+	return 0;
 err:
 	return ret;
 }
@@ -1380,13 +1382,17 @@ static S8 uvc_events_process_data(uvc_device *uvc,struct uvc_request_data *data)
 	target->bFrameIndex = iframe_tmp;
 	switch (format->fcc) {
 	case V4L2_PIX_FMT_YUYV:
+		target->dwMaxVideoFrameSize = frame->width * frame->height * 2.0;
+		break;
+	case V4L2_PIX_FMT_NV12:
 		target->dwMaxVideoFrameSize = frame->width * frame->height * 1.5;
 		break;
 	case V4L2_PIX_FMT_MJPEG:
 	case V4L2_PIX_FMT_H264:
-		target->dwMaxVideoFrameSize = MaxFrameSize;
+		target->dwMaxVideoFrameSize = frame->width * frame->height * 1.5 / 2.0;
 		break;
 	}
+
 	target->dwFrameInterval = *interval;
 	
 	if (uvc->control == UVC_VS_COMMIT_CONTROL) {
@@ -1461,20 +1467,7 @@ static S8 uvc_events_process(uvc_device *uvc)
 	case UVC_EVENT_STREAMOFF:
 		/* Stop Input streaming... */
         printf(" UVC_EVENT_STREAMOFF \n");
-		if (uvc->input_video_straming) {
-            uvc->set.uvc_input_StopCaputre(uvc,0);
-			uvc->input_video_straming = 0;
-		}
-
-		/* ... and now UVC streaming.. */
-		if (uvc->output_video_straming) {
-			uvc->output_video_straming = 0;
-            uvc->has_reqbufs = 0;
-			uvc_video_stream(uvc_fd,0);
-			uvc_uninit_device(uvc);
-			uvc_video_reqbufs(uvc,0);
-		}
-
+        uvc_handle_streamoff_event(uvc);
 		return 0;
 	}
 
@@ -1491,7 +1484,6 @@ static S8 uvc_video_process(uvc_device *uvc)
 {
 	struct v4l2_buffer ubuf;
 	int ret;
-
     int uvc_fd = uvc->uvc_fd;
 
 	/*
@@ -1518,7 +1510,7 @@ static S8 uvc_video_process(uvc_device *uvc)
 	printf("DeQueued buffer at UVC side = %d\n", ubuf.index);
 #endif
 
-    ret = uvc->set.uvc_fillbuf(uvc,&ubuf.bytesused,uvc->mem[ubuf.index].start);
+    ret = uvc->set.uvc_device_fillbuf(uvc,&ubuf.bytesused,uvc->mem[ubuf.index].start);
     if( ret <0 )
     {
         printf(" %s some thing error in fill data\n",__func__);
@@ -1580,12 +1572,10 @@ void uvc_process(uvc_device *uvc)
 
         if (FD_ISSET(uvc_fd, &efds))
         {
-           // printf("[ %s 1 ]\n",__func__);
             uvc_events_process(uvc);
         }
         if (FD_ISSET(uvc_fd, &dfds))
         {
-           // printf("[ %s 2 ]\n",__func__);
             uvc_video_process(uvc);
         }
      } 
@@ -1593,27 +1583,15 @@ void uvc_process(uvc_device *uvc)
 
 void uvc_device_exit(uvc_device *uvc)
 {
-   printf("[ %s ]\n",__func__);
-   int uvc_fd = uvc->uvc_fd;
+    int uvc_fd = uvc->uvc_fd;
+/* Streamoff Event*/
+    uvc_handle_streamoff_event(uvc);
 
-   /* Stop Input streaming... */
-   if (uvc->input_video_straming) {
-        uvc->set.uvc_input_StopCaputre(uvc,0);
-        uvc->input_video_straming = 0; 
-   }    
-
-   /* ... and now UVC streaming.. */
-   if (uvc->output_video_straming) {
-        uvc->output_video_straming = 0; 
-        uvc->has_reqbufs = 0; 
-        uvc_video_stream(uvc_fd,0);
-        uvc_uninit_device(uvc);
-        uvc_video_reqbufs(uvc,0);
-   } 
+/* Close the v4l2 device */
+    close(uvc_fd);
 }
  
 static void uvc_device_int()
 {
-     printf("[ %s ]\n",__func__);
      uvc_crash = 1;    
 }
